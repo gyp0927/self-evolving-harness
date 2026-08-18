@@ -33,12 +33,20 @@ class LLMClient:
 
     # ---------- 向量嵌入（Ollama bge-m3，本地免费）----------
     def embed(self, text: str) -> list:
-        """文本 → 1024 维向量（Ollama /api/embed）"""
+        """文本 → 1024 维向量（Ollama /api/embed）。
+        Ollama 不可用时给出可操作的修复提示（而不是裸连接错误堆栈）。"""
         body = json.dumps({"model": EMBED_MODEL, "input": text}).encode()
         req = urllib.request.Request(f"{OLLAMA_URL}/api/embed", data=body,
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+        except Exception as e:
+            raise RuntimeError(
+                f"无法连接 Ollama ({OLLAMA_URL}): {e}\n"
+                f"请先启动 Ollama（ollama serve 或打开 Ollama 应用），"
+                f"并确保已拉取模型: ollama pull {EMBED_MODEL}"
+            ) from e
         return data["embeddings"][0]
 
     # ---------- 缓存 ----------
