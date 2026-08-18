@@ -3,22 +3,11 @@
 """
 core/config.py —— 全局配置（优化版）
 新增：Ollama 向量检索配置、mock API 配置
+密钥只来自：系统环境变量，或项目根目录的 .env（gitignore 已排除，绝不入库）。
 """
 import os
 import re
 from pathlib import Path
-
-# 自动读取 Hermes 的 .env（DEEPSEEK_API_KEY 等）。
-# 路径来自环境变量 HERMES_HOME，未设置时回退到系统用户目录下的默认位置。
-# 注意：不硬编码任何用户名路径（GitHub 安全）。
-_HERMES_DEFAULT = Path.home() / "AppData/Local/hermes"
-_HERMES_ENV = Path(os.getenv("HERMES_HOME", str(_HERMES_DEFAULT))) / ".env"
-if _HERMES_ENV.exists():
-    for _line in _HERMES_ENV.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _v = _line.split("=", 1)
-            os.environ.setdefault(_k.strip(), _v.strip())
 
 # ============ 路径 ============
 BASE_DIR = Path(__file__).resolve().parent.parent   # harness_v4/
@@ -29,6 +18,17 @@ CACHE_DIR = BASE_DIR / "cache"
 
 for d in [SKILLS_DIR, MEMORY_DIR, LOG_DIR, CACHE_DIR]:
     d.mkdir(exist_ok=True)
+
+# ============ 环境变量加载（可选的项目 .env）============
+# 支持在项目根目录放 .env（如 DEEPSEEK_API_KEY=sk-xxx），不会进入 git。
+# 也可直接设置系统环境变量 LLM_API_KEY / DEEPSEEK_API_KEY。
+_PROJECT_ENV = BASE_DIR / ".env"
+if _PROJECT_ENV.exists():
+    for _line in _PROJECT_ENV.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
 
 # ============ LLM 配置 ============
 LLM_CONFIG = {
