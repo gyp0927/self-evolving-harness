@@ -80,7 +80,12 @@ pip install -r requirements.txt
 #    （OLLAMA_URL 默认 http://127.0.0.1:11434）
 
 # 4. 运行
-python main.py
+python main.py             # 真实模式（需 LLM_API_KEY + Ollama bge-m3）
+python main.py --mock-llm  # 演示模式：无 key、无 Ollama 也能跑完整流程（伪 LLM + 伪向量）
+
+# 5. 运行测试
+pip install -r requirements-dev.txt   # 或 uv pip install pytest
+python -m pytest tests/ -q            # 42 项测试：验证器/权重/影子评估/操作原子性/mock 模型
 ```
 
 > ⚠️ **密钥安全**：项目不读取、不存储任何写死在代码里的密钥。key 只通过环境变量注入，`.env*` 已被 `.gitignore` 排除。提交代码前请确保无 `.env` 文件被追踪。

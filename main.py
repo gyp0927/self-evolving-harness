@@ -8,7 +8,12 @@ main.py —— 自进化 Harness v4：完整结构自进化入口
   2. 权重轴：每轮结束按历史相关性自适应奖励权重（memory/reward_weights.json）
   3. 结构轴：每满 EPOCH_ROUNDS 轮触发架构师检查点 —— LLM 提案改图拓扑，
      验证器 + 影子评估（天气回放）+ 门控 + 回滚四层护栏
+
+用法：
+  python main.py            # 真实模式（需 LLM_API_KEY + Ollama bge-m3）
+  python main.py --mock-llm # 演示模式（无 key 无 Ollama，确定性伪 LLM）
 """
+import argparse
 import sys
 sys.path.insert(0, ".")
 
@@ -65,8 +70,18 @@ def run_task(task: str, runtime: GraphRuntime, round_id: int):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="结构自进化 Agent Harness")
+    parser.add_argument("--mock-llm", action="store_true",
+                        help="演示模式：无 key 无 Ollama，用确定性伪 LLM")
+    args = parser.parse_args()
+    if args.mock_llm:
+        import os
+        os.environ["LLM_MOCK"] = "1"
+
     mock_api.start_server()
     print("🤖 自进化 Harness v4 —— 完整结构自进化版")
+    mode = "🎭 演示模式（伪 LLM，无外部依赖）" if args.mock_llm else "🔴 真实模式（DeepSeek + Ollama）"
+    print(mode)
     print("📡 mock API 已启动: http://127.0.0.1:8891 (突发性超时: 过载期持续, 自然恢复)")
     print("🧬 进化三轴: 知识(技能upsert) | 权重(奖励自适应) | 结构(架构师改图)")
 

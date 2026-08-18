@@ -1,17 +1,74 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-core/llm_client.py —— LLM 封装 + 向量嵌入（优化版）
-新增：embed() 用 Ollama bge-m3 做本地向量化（免费、快）
+core/llm_client.py —— LLM 封装 + 向量嵌入
+- 真实模式：OpenAI 兼容端点（DeepSeek 等）+ Ollama bge-m3 嵌入
+- Mock 模式（LLM_MOCK=1 或 --mock-llm）：无 key 无 Ollama 也能演示完整流程，
+  用确定性伪回复 + 字符 n-gram 伪向量（相似文本 → 相似向量，检索流程可演示）
 """
 import hashlib
 import json
+import math
 import time
 import urllib.request
 
 from langchain_openai import ChatOpenAI
 from core.config import (LLM_CONFIG, CACHE_DIR, CACHE_MAX_AGE_HOURS,
-                         OLLAMA_URL, EMBED_MODEL)
+                         OLLAMA_URL, EMBED_MODEL, EMBED_DIM, MOCK_LLM)
+
+
+class MockLLM:
+    """无密钥演示模式：按 prompt 关键词返回确定性回复（零成本、零外部依赖）"""
+
+    STRATEGY = ('{"max_retries": 3, "base_delay": 0.5, "backoff": "exponential", '
+                '"pre_check": true, "circuit_breaker": true, "fallback": "cached"}')
+    REFLECTION = ("1. 【成功经验】\n"
+                  "- 按策略执行并如实记录每次请求结果\n"
+                  "2. 【失败教训】\n"
+                  "- 探测失败说明服务不可用，应走降级兜底而非浪费重试\n"
+                  "- 连续失败达到阈值应立即熔断\n"
+                  "3. 【可复用流程】\n"
+                  "- 前置探测 → 正式请求 → 退避重试 → 熔断 → 降级兜底\n"
+                  "4. 【技能建议】(skill名称)\n"
+                  "- resilient-api-call")
+    SKILL = ("---\n"
+             "name: resilient-api-call\n"
+             "description: 调用可能超时的API并保证成功，前置探测+熔断+降级兜底\n"
+             "type: agent-created\n"
+             "created_at: 2026-01-01\n"
+             "state: active\n"
+             "action:\n"
+             "  max_retries: 3\n"
+             "  base_delay: 0.5\n"
+             "  backoff: exponential\n"
+             "  pre_check: true\n"
+             "  circuit_breaker: true\n"
+             "  fallback: cached\n"
+             "---\n\n"
+             "## Task\n\n演示模式生成的技能：调用可能超时的API并保证有结果\n\n"
+             "## Procedure\n\n1. 前置探测（短超时）\n2. 正式请求\n3. 退避重试\n4. 熔断\n5. 降级兜底\n\n"
+             "## Lessons\n\n- 保证有结果比保证成功更重要\n- 熔断避免对已过载服务加压\n")
+
+    def call(self, prompt: str, use_cache: bool = True) -> str:
+        if "架构师" in prompt:
+            return '{"ops": []}'  # 演示模式不做图进化（noop）
+        if "反思器" in prompt:
+            return self.REFLECTION
+        if "策略专家" in prompt:
+            return self.STRATEGY
+        if "SKILL.md" in prompt:
+            return self.SKILL
+        return "好的。"
+
+    def embed(self, text: str) -> list:
+        """字符 2-gram 伪向量：相似文本 → 相似向量（bge-m3 的廉价近似，仅演示用）"""
+        vec = [0.0] * EMBED_DIM
+        s = text.replace(" ", "").lower()
+        for i in range(max(0, len(s) - 1)):
+            h = int(hashlib.md5(s[i:i + 2].encode()).hexdigest()[:8], 16)
+            vec[h % EMBED_DIM] += 1.0
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        return [x / norm for x in vec]
 
 
 class LLMClient:
@@ -66,5 +123,5 @@ class LLMClient:
         path.write_text(result, encoding="utf-8")
 
 
-# 全局单例
-llm_client = LLMClient()
+# 全局单例（按配置选择真实/演示模式）
+llm_client = MockLLM() if MOCK_LLM else LLMClient()

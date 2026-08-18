@@ -31,6 +31,7 @@ if _PROJECT_ENV.exists():
             os.environ.setdefault(_k.strip(), _v.strip())
 
 # ============ LLM 配置 ============
+MOCK_LLM = os.getenv("LLM_MOCK", "") == "1"   # 演示模式：无 key/无 Ollama 也能跑
 LLM_CONFIG = {
     "base_url": os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
     "api_key": os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY", ""),
