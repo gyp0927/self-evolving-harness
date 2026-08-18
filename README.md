@@ -1,5 +1,10 @@
 # 🧬 Harness v4 — 结构自进化 Agent
 
+![Python](https://img.shields.io/badge/Python-3.12-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Tests](https://img.shields.io/badge/tests-42%20passed-brightgreen)
+![Architecture](https://img.shields.io/badge/架构-StructureSelfEvolving-purple)
+
 > 一个会**自己改自己**的 Agent Harness：技能自己长出来、奖励权重自己调、图的拓扑被架构师 LLM 自己改写——全程不训练模型权重，纯外部结构进化。
 
 ## 一句话定位
@@ -125,7 +130,86 @@ harness_v4/
 [switch]   g1 已切换，基线 11.72                               ← 图结构进化为 g1
 [propose]  set_policy + remove_node（精简反思链）               ← 继续探索新方向
 [rejected] 验证失败 + fix 建议自动生成                         ← 修复指引喂回架构师
+[switch]   g2 已切换（反思分支整体下线，基线 13.38）             ← 架构师完整提案成功
+[rollback] 平均 8.55 < 基线 13.38 - 2.0 → 自动回滚             ← 劣化检测兜底生效
 ```
+
+## 🖥️ 运行效果（--mock-llm 演示模式节选）
+
+```
+🧬 进化三轴: 知识(技能upsert) | 权重(奖励自适应) | 结构(架构师改图)
+
+  🗺️ 当前图结构
+  ▸ 版本: g2
+  ▸ 入口: load_skills  节点: 7  边: 7
+  ▸   load_skills: →r_load
+  ▸   r_load: →tool_dispatch[route_execution]
+  ▸   execute: →r_exec
+  ▸   r_exec: →r_eff
+  ▸   r_eff: →END[should_deep_reflect]
+  ▸   save_memory: →END
+  ▸   tool_dispatch: →r_exec
+  ▸ 保护节点: execute, load_skills, save_memory
+
+  📋 任务: 调用可能超时的API并保证成功  (轮次 43, 图 g2)
+  🔍 技能检索（bge-m3 向量相似度）
+  🔧 技能工具调度          ← 确定性分发：调用技能 resilient-api-call-v2
+  ❌ 第1次请求超时 → 退避等待 0.5s
+  ❌ 第2次请求超时 → 熔断器打开 → 降级兜底 fallback=cached
+
+  🎁 奖励评估
+  ✅ 任务降级 | 重试 2 次 | 耗时 2.56s | 工具 resilient-api-call-v2
+  load_skills    raw=+0.80 → weighted=+0.80 (向量检索到相关技能)
+  execute        raw=+1.50 → weighted=+6.00 (任务成功; 降级兜底-1.0; 耗时2.56s快+0.5)
+  efficiency     raw=-0.50 → weighted=-0.75 (重试2次(-1.0); 步骤多-1.0; 复用技能+1.0; 遵循技能机制+0.5)
+  🏆 总奖励: 6.05
+
+  🧠 架构师检查点（结构自进化）
+  回滚: 图已回滚: 平均 8.55 低于切换前基线 13.38   ← 劣化自动恢复
+```
+
+## 🛠️ 技能工具示例（技能 = 可调用插件）
+
+技能文件 `skills/*.md` 的 frontmatter 带 `action` 字段即注册为工具，LLM 可调用、`tool_dispatch` 节点可确定性执行：
+
+```yaml
+---
+name: resilient-api-call-v2
+description: 调用可能超时的API并保证成功，通过前置检查、动态重试、熔断降级确保始终有可用结果
+type: agent-created
+created_at: 2026-08-18
+state: active
+version: 2
+action:                    # ← 可执行配置：注册为工具
+  max_retries: 3
+  base_delay: 0.5
+  backoff: exponential
+  pre_check: true          # 前置探测：失败直接降级，不浪费重试
+  circuit_breaker: true    # 熔断：连续失败 2 次停止重试
+  fallback: cached         # 兜底：保证有结果
+---
+```
+
+- **无 `action` 字段** → 仅作为参考知识注入 prompt（兼容旧技能）
+- 技能库增删/更新 → 工具集随之变化（**动作集 = 结构的一部分**）
+- 反思生成的技能若与已有技能高度相似 → **upsert 更新**（版本递增、教训去重），知识收敛不膨胀
+
+## ❓ FAQ
+
+**Q: 没有 API key 能跑吗？**
+A: 能。`python main.py --mock-llm` 用确定性伪 LLM + 伪向量跑完整流程（三轴进化、护栏、可视化全部可见），零外部依赖。
+
+**Q: Ollama 没装 / bge-m3 没拉？**
+A: 向量检索依赖本地 Ollama + bge-m3：`ollama pull bge-m3`。未启动时程序会给出可操作提示（不会裸崩）。mock 模式不需要 Ollama。
+
+**Q: 首次运行生成了什么？**
+A: `memory/` 自动创建：`graph_spec.json`（默认图）、`reward_weights.json`（默认权重）、`rl_trajectory.jsonl`（轨迹）、`evolution_log.jsonl`（进化审计）。技能库为空时第一次失败会反思生成第一个技能。
+
+**Q: 密钥安全吗？**
+A: key 只来自项目根目录 `.env`（已被 .gitignore 排除）或环境变量，代码里零硬编码。提交前可用 `git grep -lE "sk-[a-zA-Z0-9]{16,}"` 自查。
+
+**Q: 图会被改坏吗？**
+A: 四层护栏：注册表白名单（LLM 只能引用注册表内节点/策略）→ 验证器 10 条规则 → 影子评估（天气回放）→ 门控 + 自动回滚。改坏了会回滚，不会停摆。
 
 ## ⚖️ 诚实的设计边界
 
