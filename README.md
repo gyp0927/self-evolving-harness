@@ -216,6 +216,13 @@ python tools/export_dsh.py --limit 6    # 只取最近 6 个会话
 python main.py --mock-llm --weather build/dsh_weather.json
 ```
 
+把失败轮聚成可行动的模式，并反射成候选技能：
+
+```bash
+python tools/cluster_failures.py     # → build/dsh_failures.json（按错误签名聚类）
+python tools/reflect_failures.py     # → build/dsh_skills/*.md（candidate，人工评审后启用）
+```
+
 依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
 
 ## ❓ FAQ

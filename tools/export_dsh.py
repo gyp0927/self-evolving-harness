@@ -147,6 +147,7 @@ def build_turns(path: Path, max_turns: int | None = None):
                 "name": data.get("name") or "unknown",
                 "time": t,
                 "call_id": cid,
+                "args": (data.get("arguments") or "")[:200],
             }
 
         elif etype == "tool/result":
@@ -160,11 +161,22 @@ def build_turns(path: Path, max_turns: int | None = None):
             meta_tool = data.get("meta") or {}
             exit_code = (meta_tool.get("opsShell") or {}).get("exitCode")
             ok = (not is_error) and exit_code in (0, None)
+            error_text = ""
+            if not ok:
+                for block in (msg.get("content") or data.get("content") or []):
+                    if block.get("type") == "text" and block.get("text"):
+                        error_text = block["text"].splitlines()[0][:200]
+                        break
+                # ops_bash 的 content 只有 "[stderr]" 或纯 stdout，退回用命令本身做特征
+                if not error_text.strip() or error_text.startswith(("[stderr]", "===")):
+                    args = call.get("args", "")
+                    error_text = f"cmd: {args[:120]}" if args else error_text
             current["tool_calls"].append({
                 "name": call.get("name", "unknown"),
                 "ok": ok,
                 "duration_ms": max(0, t - call.get("time", t)),
                 "exit_code": exit_code,
+                "error": error_text,
             })
             current["attempts"].append((call.get("time", t), ok, call.get("name", "unknown")))
 
