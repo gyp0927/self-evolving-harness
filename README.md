@@ -194,6 +194,23 @@ action:                    # ← 可执行配置：注册为工具
 - 技能库增删/更新 → 工具集随之变化（**动作集 = 结构的一部分**）
 - 反思生成的技能若与已有技能高度相似 → **upsert 更新**（版本递增、教训去重），知识收敛不膨胀
 
+## 📥 接入真实会话（可选）
+
+`tools/export_dsh.py` 把 DeepSeek Harness 的会话转录（`~/.dsh/sessions/**/session.v4.jsonl.zstd`）导出成本项目可用的数据集：
+
+```bash
+python tools/export_dsh.py              # 全量，输出到 build/
+python tools/export_dsh.py --limit 6    # 只取最近 6 个会话
+```
+
+产物：
+
+- `build/dsh_turns.jsonl`：每轮任务（任务文本 / 工具调用 / token / 耗时 / 是否成功 / LLM 重试）
+- `build/dsh_events.json`：`{轮次: [每次尝试的 ok 序列]}`，可直接作为天气回放输入
+- `build/dsh_summary.json`：工具分布、错误率、token 总量、重试次数
+
+依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
+
 ## ❓ FAQ
 
 **Q: 没有 API key 能跑吗？**

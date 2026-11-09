@@ -12,6 +12,7 @@ __pycache__/
 cache/
 rl_logs/
 run_*.txt
+build/
 
 # ===== IDE =====
 .idea/
