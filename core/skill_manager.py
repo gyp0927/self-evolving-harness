@@ -20,7 +20,7 @@ from pathlib import Path
 
 from core.config import (SKILLS_DIR, MEMORY_DIR, LOAD_THRESHOLD, LOAD_TOP_K,
                          STALE_DAYS, ARCHIVE_DAYS, UMBRELLA_MIN, UPDATE_THRESHOLD,
-                         TOOL_MATCH_THRESHOLD)
+                         TOOL_MATCH_THRESHOLD, MAX_UPDATE_BLOCKS)
 from core.llm_client import llm_client
 
 SKILL_GEN_PROMPT = """根据反思生成标准 SKILL.md(YAML frontmatter + Markdown)。
@@ -209,12 +209,29 @@ class SkillManager:
             return self._update_skill(best[0], reflection, task, persist=persist)
         return self._create_new(reflection, task, persist=persist)
 
+    def _skill_description(self, f: Path) -> str:
+        """取技能 frontmatter 的 description（与 match_tool 同一口径）"""
+        try:
+            front = yaml.safe_load(f.read_text(encoding="utf-8").split("---")[1]) or {}
+            return front.get("description") or f.stem
+        except Exception:
+            return f.stem
+
     def _find_most_similar(self, task: str):
-        """找与任务最相似的已有技能，返回 (名称, 相似度) 或 None"""
+        """找与任务最相似的已有技能，返回 (名称, 相似度) 或 None。
+
+        口径与 match_tool 一致：用 description 嵌入，不用技能全文。
+        全文含 Procedure/Lessons，会把"同领域但描述不同"的技能拉偏，
+        也让 upsert 阈值（0.70）与工具匹配阈值（0.55）含义不可比。
+        """
         task_vec = llm_client.embed(task)
         best = None
         for f in SKILLS_DIR.glob("*.md"):
-            s = cosine_sim(task_vec, self._embed_cached(f))
+            desc = self._skill_description(f)
+            entry = self._desc_cache.get(f.stem)
+            if entry is None or entry[0] != desc:
+                self._desc_cache[f.stem] = (desc, llm_client.embed(desc))
+            s = cosine_sim(task_vec, self._desc_cache[f.stem][1])
             if best is None or s > best[1]:
                 best = (f.stem, s)
         return best
@@ -283,6 +300,12 @@ class SkillManager:
         update_block = (f"\n## Update v{version} ({now})\n\n任务: {task}\n\n"
                         + "\n".join(f"- {l}" for l in new_lessons) + "\n")
         new_text = f"---{front}---{body.rstrip()}\n{update_block}"
+        # 只保留最近 N 段 Update：重复追加会让技能无限膨胀、稀释检索嵌入；
+        # 老教训已沉淀在正文，不需要全部留在文档里。
+        if new_text.count("\n## Update v") > MAX_UPDATE_BLOCKS:
+            head, *blocks = new_text.split("\n## Update v")
+            new_text = head + "".join("\n## Update v" + b
+                                      for b in blocks[-MAX_UPDATE_BLOCKS:])
         if persist:
             path.write_text(new_text, encoding="utf-8")
             self._bump_meta(name)
@@ -329,16 +352,24 @@ class SkillManager:
             prefix = f.stem.split("-")[0]
             groups.setdefault(prefix, []).append(f)
         for prefix, files in groups.items():
-            if len(files) >= UMBRELLA_MIN:
-                umbrella = SKILLS_DIR / f"{prefix}.md"
-                if umbrella.exists():
-                    parts = [f"## {f.stem}\n{f.read_text(encoding='utf-8')}"
-                             for f in files if f != umbrella]
-                    umbrella.write_text(
-                        umbrella.read_text(encoding="utf-8") + "\n\n" + "\n\n".join(parts),
-                        encoding="utf-8")
-                    for f in files:
-                        if f != umbrella:
-                            f.rename(archive_dir / f.name)
-                    print(f"  🌂 雨伞合并: {len(files)} 个 {prefix}-* → {prefix}.md")
+            if len(files) < UMBRELLA_MIN:
+                continue
+            umbrella = SKILLS_DIR / f"{prefix}.md"
+            others = [f for f in files if f != umbrella]
+            if not others:
+                continue
+            # 首次合并时必须“开伞”：原实现只在 umbrella 已存在时合并，
+            # 而 umbrella 永远不会自己出现 → 雨伞合并是死代码。
+            if umbrella.exists():
+                base = umbrella.read_text(encoding="utf-8")
+            else:
+                base = (f"---\nname: {prefix}\n"
+                        f"description: {prefix} 系列技能合集（Curator 自动合并）\n"
+                        f"type: curator\nstate: active\n---\n\n")
+            parts = [f"## {f.stem}\n{f.read_text(encoding='utf-8')}" for f in others]
+            umbrella.write_text(base.rstrip() + "\n\n" + "\n\n".join(parts) + "\n",
+                                encoding="utf-8")
+            for f in others:
+                f.rename(archive_dir / f.name)
+            print(f"  🌂 雨伞合并: {len(others)} 个 {prefix}-* → {prefix}.md")
         print("  ✅ Curator 完成")

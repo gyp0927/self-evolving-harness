@@ -47,6 +47,7 @@ def make_replay_oracle(events: list):
     """
     seq = list(events)
     idx = [0]
+    last = seq[-1] if seq else True
 
     def oracle(timeout: float) -> bool:
         import time as _t
@@ -54,7 +55,9 @@ def make_replay_oracle(events: list):
             ok = seq[idx[0]]
             idx[0] += 1
         else:
-            ok = True  # 序列耗尽：默认成功（影子轮与生产轮请求数相同，正常不会到这里）
+            # 序列耗尽：保持最后一个天气，而不是默认成功。
+            # 否则候选图重试次数更多 = 白拿成功，影子评估会系统性偏袒"多试"的图。
+            ok = last
         _t.sleep(timeout if not ok else 0.05)
         return ok
 

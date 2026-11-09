@@ -14,8 +14,15 @@ main.py —— 自进化 Harness v4：完整结构自进化入口
   python main.py --mock-llm # 演示模式（无 key 无 Ollama，确定性伪 LLM）
 """
 import argparse
+import os
 import sys
 sys.path.insert(0, ".")
+
+# 关键：--mock-llm 必须在导入 core.* 之前置位。
+# core.config 在导入时就把 MOCK_LLM 求值成常量，core.llm_client 也在此刻构造单例；
+# 放到 main() 里再设环境变量已经晚了（后者还会在无 key 机器上直接抛 OpenAIError）。
+if "--mock-llm" in sys.argv:
+    os.environ["LLM_MOCK"] = "1"
 
 from core.state import new_state
 from core.skill_manager import SkillManager
@@ -74,9 +81,7 @@ def main():
     parser.add_argument("--mock-llm", action="store_true",
                         help="演示模式：无 key 无 Ollama，用确定性伪 LLM")
     args = parser.parse_args()
-    if args.mock_llm:
-        import os
-        os.environ["LLM_MOCK"] = "1"
+    # LLM_MOCK 已在文件顶部（core.* 导入之前）置位，这里不再设置
 
     mock_api.start_server()
     print("🤖 自进化 Harness v4 —— 完整结构自进化版")

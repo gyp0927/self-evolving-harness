@@ -79,6 +79,7 @@ EFF_STEP_MAX = 6
 STALE_DAYS = 30
 ARCHIVE_DAYS = 90
 UMBRELLA_MIN = 3
+MAX_UPDATE_BLOCKS = 3      # 技能文档最多保留最近 N 段 "## Update vN"，防止无限膨胀
 
 # ============ 缓存 ============
 CACHE_MAX_AGE_HOURS = 24
@@ -105,6 +106,7 @@ GRAPH_MAX_EDGES = 16        # 边（含条件边）总数上限
 EPOCH_ROUNDS = 3           # 每 N 轮触发一次架构师检查点（与每次运行 3 任务的节奏对齐）
 SHADOW_ROUNDS = 3           # 影子评估轮数
 GATE_THRESHOLD = 1.0        # 切换门控：影子重算总分均值须 ≥ 生产 + 此值
+GATE_CONFIDENCE = 0.75      # 切换门控：bootstrap 重采样下"影子均值 > 生产均值"的胜率下限（小样本防噪）
 ROLLBACK_WINDOW = 3         # 回滚观察窗口（轮）
 ROLLBACK_THRESHOLD = 2.0    # 回滚触发：切换后均值低于基线此值
 ROLLBACK_COOLDOWN_SECONDS = 600  # 回滚后冷却期（秒），期间不提案防振荡

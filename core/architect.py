@@ -9,12 +9,13 @@ core/architect.py —— 架构师：图拓扑进化检查点（档3，新增）
 全部决策写 evolution_log.jsonl（可审计）。
 """
 import json
+import random
 import time
 from copy import deepcopy
 
-from core.config import (SHADOW_ROUNDS, GATE_THRESHOLD, ROLLBACK_WINDOW,
-                         ROLLBACK_THRESHOLD, ROLLBACK_COOLDOWN_SECONDS,
-                         PROTECTED_NODES)
+from core.config import (SHADOW_ROUNDS, GATE_THRESHOLD, GATE_CONFIDENCE,
+                         ROLLBACK_WINDOW, ROLLBACK_THRESHOLD,
+                         ROLLBACK_COOLDOWN_SECONDS, PROTECTED_NODES)
 from core.graph_builder import validate_spec, build_graph, save_spec, CONDITIONAL_POLICIES
 from core.memory import window_records, window_stats
 from core.weights import recompute_total, load_weights
@@ -208,34 +209,66 @@ def _apply_ops(spec: dict, ops: list):
     return spec
 
 
-def run_shadow_eval(candidate_spec: dict, tasks: list, events: list,
-                    rounds: int = SHADOW_ROUNDS) -> list:
+def run_shadow_eval(candidate_spec: dict, tasks: list, events: list = None,
+                    rounds: int = SHADOW_ROUNDS, *, cases=None) -> list:
     """影子评估：候选图在天气回放（生产窗口真实请求序列）下跑 K 轮，只算不写。
     影子与生产面对完全相同的"服务天气"，零打扰真实服务（burst 状态不受污染）。
-    注意：oracle 必须共享同一游标（顺序消费生产事件序列），否则每个任务
-    都从序列头部重放，影子结果失真（全部命中同一个天气）。"""
+
+    公平性（cases 模式）：每个任务用**自己那一轮**的生产事件段回放。
+    旧实现共享一个游标顺序消费整段序列——候选图重试次数一变，消费的事件数
+    就变，后面任务见到的天气跟着错位，候选与生产就不是同一场雨。
+    cases 为空时退回共享游标模式，仅用于兼容旧调用。"""
     import mock_api  # 顶层模块（harness_v4/mock_api.py），不在 core 包内
     from core.state import new_state
     from core.tracer import silent
     app = build_graph(candidate_spec)
-    oracle = mock_api.make_replay_oracle(events)  # 共享游标：全部影子任务顺序重放
     results = []
     with silent():
-        for i in range(rounds):
-            for task in tasks:
-                st = new_state(task, shadow=True, round_id=9000 + i,
-                               graph_version="shadow-candidate")
-                st["_oracle"] = oracle
-                final = app.invoke(st)
-                results.append({
-                    "success": final["success"],
-                    "total_reward": final["total_reward"],
-                })
+        if cases:
+            for i in range(rounds):
+                for task, segment in cases:
+                    st = new_state(task, shadow=True, round_id=9000 + i,
+                                   graph_version="shadow-candidate")
+                    st["_oracle"] = mock_api.make_replay_oracle(segment)
+                    final = app.invoke(st)
+                    results.append({
+                        "success": final["success"],
+                        "total_reward": final["total_reward"],
+                    })
+        else:
+            oracle = mock_api.make_replay_oracle(events or [])
+            for i in range(rounds):
+                for task in tasks:
+                    st = new_state(task, shadow=True, round_id=9000 + i,
+                                   graph_version="shadow-candidate")
+                    st["_oracle"] = oracle
+                    final = app.invoke(st)
+                    results.append({
+                        "success": final["success"],
+                        "total_reward": final["total_reward"],
+                    })
     return results
 
 
-def _gate(shadow: list, prod: dict):
-    """门控双条件：影子成功率 ≥ 生产，且影子重算总分均值 ≥ 生产 + GATE_THRESHOLD"""
+def _bootstrap_win_prob(shadow: list, prod_rewards: list, n: int = 1000) -> float:
+    """P(影子均值 > 生产均值)：bootstrap 重采样，固定种子保证可复现。
+    小样本（约 9 条）下只看点估计会把噪声当提升，这里用胜率兜底。"""
+    if not shadow or not prod_rewards:
+        return 1.0
+    rng = random.Random(0)
+    s_vals = [r["total_reward"] for r in shadow]
+    wins = 0
+    for _ in range(n):
+        s = sum(rng.choice(s_vals) for _ in range(len(s_vals))) / len(s_vals)
+        p = sum(rng.choice(prod_rewards) for _ in range(len(prod_rewards))) / len(prod_rewards)
+        if s > p:
+            wins += 1
+    return wins / n
+
+
+def _gate(shadow: list, prod: dict, prod_rewards: list = None):
+    """门控三条件：成功率不降、点估计 ≥ 生产 + 阈值、提升胜率 ≥ GATE_CONFIDENCE。
+    第三条是小样本防噪：9 条记录的点估计可能只是运气。"""
     if not shadow:
         return False, "影子无结果"
     sr = sum(1 for r in shadow if r["success"]) / len(shadow)
@@ -245,7 +278,13 @@ def _gate(shadow: list, prod: dict):
     if avg < prod["avg_total"] + GATE_THRESHOLD:
         return False, (f"影子总分 {avg:.2f} < 生产 {prod['avg_total']:.2f} + "
                        f"{GATE_THRESHOLD}")
-    return True, f"通过 (成功率 {sr:.2f}≥{prod['success_rate']:.2f}, 总分 {avg:.2f}≥{prod['avg_total']+GATE_THRESHOLD:.2f})"
+    if prod_rewards:
+        win = _bootstrap_win_prob(shadow, prod_rewards)
+        if win < GATE_CONFIDENCE:
+            return False, (f"提升胜率 {win:.2f} < {GATE_CONFIDENCE}（点估计 "
+                           f"{avg:.2f} 可能来自噪声）")
+    return True, (f"通过 (成功率 {sr:.2f}≥{prod['success_rate']:.2f}, "
+                  f"总分 {avg:.2f}≥{prod['avg_total']+GATE_THRESHOLD:.2f})")
 
 
 def _maybe_rollback(runtime, records, weights, tasks) -> tuple:
@@ -254,22 +293,30 @@ def _maybe_rollback(runtime, records, weights, tasks) -> tuple:
     if not switches:
         return False, ""
     baseline = switches[-1].get("baseline")
-    if baseline is None:
+    baseline_raw = switches[-1].get("baseline_raw")
+    if baseline is None and baseline_raw is None:
         return False, ""
     window = window_records(records, ROLLBACK_WINDOW, task_ids=set(tasks))
     if not window:
         return False, ""
     avg = sum(recompute_total(r, weights) for r in window) / len(window)
-    if avg < baseline - ROLLBACK_THRESHOLD:
+    # 权重是自适应的：必须用同一套当前权重重算基线，否则基线是旧权重下的分数，
+    # 与现在不可比（旧实现直接比存储的加权分，权重一漂移就误判）。
+    if baseline_raw:
+        base_avg = sum(recompute_total({"rewards": rws}, weights)
+                       for rws in baseline_raw) / len(baseline_raw)
+    else:
+        base_avg = baseline
+    if avg < base_avg - ROLLBACK_THRESHOLD:
         snap = load_snapshot()
         if snap is not None:
             runtime.restore(snap)
             save_spec(snap)
             log_event("rollback", {
-                "reason": f"平均 {avg:.2f} < 基线 {baseline:.2f} - {ROLLBACK_THRESHOLD}",
+                "reason": f"平均 {avg:.2f} < 基线 {base_avg:.2f} - {ROLLBACK_THRESHOLD}",
                 "restored_version": snap.get("version_label", "default"),
             })
-            return True, f"图已回滚: 平均 {avg:.2f} 低于切换前基线 {baseline:.2f}"
+            return True, f"图已回滚: 平均 {avg:.2f} 低于切换前基线 {base_avg:.2f}"
     return False, ""
 
 
@@ -304,7 +351,8 @@ def run_epoch_checkpoint(runtime, tasks, round_events: dict):
         except Exception:
             pass
 
-    prod = window_stats(window_records(records, SHADOW_ROUNDS, task_ids=canonical), weights)
+    prod_records = window_records(records, SHADOW_ROUNDS, task_ids=canonical)
+    prod = window_stats(prod_records, weights)
     info("生产窗口", f"{prod['n']} 轮 成功率={prod['success_rate']:.2f} 平均={prod['avg_total']:.2f}")
 
     # 1. 提案（LLM）
@@ -325,19 +373,22 @@ def run_epoch_checkpoint(runtime, tasks, round_events: dict):
     for op in ops:
         step(f"  op: {op}")
 
-    # 3. 影子评估（天气回放：取生产窗口最近 SHADOW_ROUNDS 轮的请求序列）
-    events = []
+    # 3. 影子评估（按任务分段回放：每个生产轮用自己的天气段，
+    #    候选图重试次数变化不再把后面任务的天气顶错位）
+    cases = []
     recent_rounds = sorted(round_events.keys())[-SHADOW_ROUNDS:]
     for r in recent_rounds:
-        events.extend(round_events.get(r, []))
-    if not events:
+        seg = round_events.get(r) or []
+        if seg:
+            cases.append((tasks[(r - 1) % len(tasks)], seg))
+    if not cases:
         info("影子评估", "无生产天气可回放，跳过", "yellow")
         return
-    shadow = run_shadow_eval(candidate, tasks, events)
+    shadow = run_shadow_eval(candidate, tasks, rounds=1, cases=cases)
     log_event("shadow", {"version": "candidate", "results": shadow})
 
     # 4. 门控
-    ok, msg = _gate(shadow, prod)
+    ok, msg = _gate(shadow, prod, [recompute_total(r, weights) for r in prod_records])
     info("门控", f"{msg}", "green" if ok else "yellow")
     if not ok:
         log_event("rejected", {"reason": msg, "ops": ops})
@@ -351,7 +402,11 @@ def run_epoch_checkpoint(runtime, tasks, round_events: dict):
     save_snapshot(runtime.spec, "before-switch")
     save_spec(candidate)
     runtime.recompile(candidate)
-    log_event("switch", {"version": version_label, "ops": ops, "baseline": baseline})
+    # 基线同时存 raw 分量：权重是自适应的，只存加权分会让回滚比较失真
+    baseline_raw = [[{"step": rw.get("step", ""), "raw": rw.get("raw", 0.0)}
+                     for rw in r.get("rewards", [])] for r in prod_records]
+    log_event("switch", {"version": version_label, "ops": ops,
+                         "baseline": baseline, "baseline_raw": baseline_raw})
     info("切换", f"图已进化为 {version_label}（基线 {baseline:.2f}）", "green")
 
 

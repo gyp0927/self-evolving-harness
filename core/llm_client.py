@@ -123,5 +123,29 @@ class LLMClient:
         path.write_text(result, encoding="utf-8")
 
 
-# 全局单例（按配置选择真实/演示模式）
-llm_client = MockLLM() if MOCK_LLM else LLMClient()
+class _LazyLLMClient:
+    """惰性单例：导入时不构造任何真实客户端。
+
+    这样：
+    - 没有 API key 的机器也能 import 本项目（测试/文档生成不再在导入期抛 OpenAIError）；
+    - --mock-llm 只要在首次调用前置位 LLM_MOCK 就生效；
+    - 真正的凭证错误推迟到第一次调用，报错信息仍指向使用处。
+    """
+
+    def __init__(self):
+        self._impl = None
+
+    def _get(self):
+        if self._impl is None:
+            self._impl = MockLLM() if MOCK_LLM else LLMClient()
+        return self._impl
+
+    def call(self, prompt: str, use_cache: bool = True) -> str:
+        return self._get().call(prompt, use_cache=use_cache)
+
+    def embed(self, text: str) -> list:
+        return self._get().embed(text)
+
+
+# 全局单例（惰性：首次调用时才按配置选择真实/演示模式）
+llm_client = _LazyLLMClient()
