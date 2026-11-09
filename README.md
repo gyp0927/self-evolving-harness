@@ -1,4 +1,4 @@
-# 🧬 Harness v4 — 结构自进化 Agent
+# 🧬 Harness — 结构自进化 Agent
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -98,7 +98,7 @@ python -m pytest tests/ -q            # 46 项测试：验证器/权重/影子�
 ## 📁 目录结构
 
 ```
-harness_v4/
+self-evolving-harness/
 ├── main.py                  # 入口：任务套件 + 三轴进化编排
 ├── mock_api.py              # 真实任务环境（突发性超时模拟 + 天气回放）
 ├── core/

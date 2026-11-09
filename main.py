@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py —— 自进化 Harness v4：完整结构自进化入口
+main.py —— 自进化 Harness：完整结构自进化入口
 ====================================
 三轴进化，每次运行自动推进：
   1. 知识轴：任务 → 向量检索技能 → LLM 决策（可调用技能工具）→ 真实执行 → 反思 → 技能 upsert
@@ -84,7 +84,7 @@ def main():
     # LLM_MOCK 已在文件顶部（core.* 导入之前）置位，这里不再设置
 
     mock_api.start_server()
-    print("🤖 自进化 Harness v4 —— 完整结构自进化版")
+    print("🤖 自进化 Harness —— 完整结构自进化版")
     mode = "🎭 演示模式（伪 LLM，无外部依赖）" if args.mock_llm else "🔴 真实模式（DeepSeek + Ollama）"
     print(mode)
     print("📡 mock API 已启动: http://127.0.0.1:8891 (突发性超时: 过载期持续, 自然恢复)")

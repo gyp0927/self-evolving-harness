@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 # ============ 路径 ============
-BASE_DIR = Path(__file__).resolve().parent.parent   # harness_v4/
+BASE_DIR = Path(__file__).resolve().parent.parent   # 仓库根目录/
 SKILLS_DIR = BASE_DIR / "skills"
 MEMORY_DIR = BASE_DIR / "memory"
 LOG_DIR = BASE_DIR / "rl_logs"

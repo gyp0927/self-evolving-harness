@@ -218,7 +218,7 @@ def run_shadow_eval(candidate_spec: dict, tasks: list, events: list = None,
     旧实现共享一个游标顺序消费整段序列——候选图重试次数一变，消费的事件数
     就变，后面任务见到的天气跟着错位，候选与生产就不是同一场雨。
     cases 为空时退回共享游标模式，仅用于兼容旧调用。"""
-    import mock_api  # 顶层模块（harness_v4/mock_api.py），不在 core 包内
+    import mock_api  # 顶层模块（仓库根目录/mock_api.py），不在 core 包内
     from core.state import new_state
     from core.tracer import silent
     app = build_graph(candidate_spec)
