@@ -21,11 +21,34 @@ request_events = []     # 天气回放：生产窗口内每次请求的 ok/超�
 _burst = 0              # 是否处于过载期
 _recovery_at = 0.0      # 恢复时间戳（时间驱动：即使没有请求，过载也会自动过去）
 
+_weather = None         # 真实会话天气脚本（bool 序列），None = 用突发模型
+_weather_idx = 0
+
+
+def set_weather(events):
+    """用真实会话的请求结果序列驱动天气；传 None 恢复突发超时模型。
+
+    events 里 True=成功、False=超时，按请求顺序消费；耗尽后粘住最后一个天气
+    （与 make_replay_oracle 同口径，避免"多试就白拿成功"）。
+    """
+    global _weather, _weather_idx, _burst
+    _weather = list(events) if events else None
+    _weather_idx = 0
+    _burst = 0
+
 
 def _should_timeout() -> bool:
     """突发性超时决策：过载期按时间自动恢复（真实服务特性——即使无人探测也会恢复）。
-    这让"探测失败→降级→稍后重试"成为可行策略，而不是永久锁死在降级。"""
-    global _burst, _recovery_at
+    这让"探测失败→降级→稍后重试"成为可行策略，而不是永久锁死在降级。
+    设置了天气脚本时优先按脚本回放真实会话的成败序列。"""
+    global _burst, _recovery_at, _weather, _weather_idx
+    if _weather is not None:
+        if _weather_idx < len(_weather):
+            ok = _weather[_weather_idx]
+            _weather_idx += 1
+        else:
+            ok = _weather[-1]
+        return not ok
     if _burst == 0:
         if random.random() < TIMEOUT_RATE:
             _burst = 1

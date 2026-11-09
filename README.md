@@ -207,7 +207,14 @@ python tools/export_dsh.py --limit 6    # 只取最近 6 个会话
 
 - `build/dsh_turns.jsonl`：每轮任务（任务文本 / 工具调用 / token / 耗时 / 是否成功 / LLM 重试）
 - `build/dsh_events.json`：`{轮次: [每次尝试的 ok 序列]}`，可直接作为天气回放输入
+- `build/dsh_weather.json`：按轮次排列的天气脚本（`{task, events, success, duration_ms}`）
 - `build/dsh_summary.json`：工具分布、错误率、token 总量、重试次数
+
+用真实会话的失败序列当天气跑进化（不再用突发超时模型）：
+
+```bash
+python main.py --mock-llm --weather build/dsh_weather.json
+```
 
 依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
 

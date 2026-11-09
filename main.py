@@ -14,8 +14,10 @@ main.py —— 自进化 Harness：完整结构自进化入口
   python main.py --mock-llm # 演示模式（无 key 无 Ollama，确定性伪 LLM）
 """
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 sys.path.insert(0, ".")
 
 # 关键：--mock-llm 必须在导入 core.* 之前置位。
@@ -80,14 +82,25 @@ def main():
     parser = argparse.ArgumentParser(description="结构自进化 Agent Harness")
     parser.add_argument("--mock-llm", action="store_true",
                         help="演示模式：无 key 无 Ollama，用确定性伪 LLM")
+    parser.add_argument("--weather", default="",
+                        help="真实会话天气脚本（tools/export_dsh.py 产出的 dsh_weather.json）")
     args = parser.parse_args()
     # LLM_MOCK 已在文件顶部（core.* 导入之前）置位，这里不再设置
+
+    weather_script = []
+    if args.weather:
+        weather_script = json.loads(Path(args.weather).read_text(encoding="utf-8"))
+        if not isinstance(weather_script, list) or not weather_script:
+            sys.exit(f"天气脚本为空或格式不对: {args.weather}")
 
     mock_api.start_server()
     print("🤖 自进化 Harness —— 完整结构自进化版")
     mode = "🎭 演示模式（伪 LLM，无外部依赖）" if args.mock_llm else "🔴 真实模式（DeepSeek + Ollama）"
     print(mode)
-    print("📡 mock API 已启动: http://127.0.0.1:8891 (突发性超时: 过载期持续, 自然恢复)")
+    if weather_script:
+        print(f"🌧️ 天气回放: {args.weather} ({len(weather_script)} 条真实会话序列)")
+    else:
+        print("📡 mock API 已启动: http://127.0.0.1:8891 (突发性超时: 过载期持续, 自然恢复)")
     print("🧬 进化三轴: 知识(技能upsert) | 权重(奖励自适应) | 结构(架构师改图)")
 
     load_weights()
@@ -103,7 +116,11 @@ def main():
     show_architecture_status(runtime)
 
     # ============ 本轮任务 ============
-    for round_id in rounds_run:
+    for idx, round_id in enumerate(rounds_run):
+        if weather_script:
+            entry = weather_script[idx % len(weather_script)]
+            events = entry["events"] if isinstance(entry, dict) else entry
+            mock_api.set_weather(events)
         run_task(task=ROUND_TASKS[round_id - start_round], runtime=runtime, round_id=round_id)
         # 天气增量快照（影子回放源）：只存本轮新增的请求事件，
         # 否则全量快照会让前几轮事件在拼接时重复出现
@@ -126,6 +143,7 @@ def main():
     print("\n📈 可视化:")
     visualize()
 
+    mock_api.set_weather(None)
     mock_api.stop_server()
 
 

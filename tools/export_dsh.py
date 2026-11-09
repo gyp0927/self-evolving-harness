@@ -280,8 +280,18 @@ def main():
     (out_dir / "dsh_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # 天气脚本：每条真实 attempt 的 ok/失败序列，可直接喂给 main.py --weather
+    weather = [
+        {"task": r["task"], "success": r["success"],
+         "duration_ms": r["duration_ms"], "events": [a["ok"] for a in r["attempts"]]}
+        for r in rows if r["attempts"]
+    ]
+    (out_dir / "dsh_weather.json").write_text(
+        json.dumps(weather, ensure_ascii=False, indent=2), encoding="utf-8")
+
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"\n写出: {turns_path}  ({len(rows)} 行)")
+    print(f"写出: {out_dir / 'dsh_weather.json'}  ({len(weather)} 条天气)")
 
 
 if __name__ == "__main__":
