@@ -3,24 +3,28 @@
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
-![Architecture](https://img.shields.io/badge/架构-PatchPipeline-purple)
 
-> 一个从**真实会话**里学、只往外打两类补丁的 Agent Harness：**技能、插件**。不改宿主框架、不改源码，也不改人家已经写好的 system prompt。
+> 从真实会话里提取失败，生成**技能**和**插件**两类补丁，每一条都要过回放验收。不改框架、不改源码、不改提示词。
 
-## 一句话定位
+## 为什么做这个
 
-大多数 Agent 框架的"进化"发生在生态里（人写插件、人调参）；本项目把它做成流水线：导出真实会话 → 失败聚类 → 生成补丁 → 同一批任务回放验收 → 达标才留下。**补丁只落在技能和插件两个位置，不碰宿主 Agent 的框架、源码和 system prompt。**
+开源 Agent 的框架和 system prompt 已经写得很成熟，缺的不是再写一套，而是**从自己的失败里学**：同一类工具错误反复出现，没有人把它固化成技能，也没有人在执行前拦一下。
 
-## 📦 产出物：只有两类补丁
+所以这个项目的定位很小：**只做补丁，不做新 Agent。**
 
-| 类型 | 落点 | 作用 |
-|---|---|---|
-| **技能** | `skills/*.md`（可注册为工具） | 把失败恢复步骤固化成按需加载的知识 |
-| **插件** | 宿主插件（如 DSH plugin） | 用钩子在工具执行前拦截、给出拒绝理由 |
+- 框架不动——节点、循环、上下文管理都保持宿主原样
+- 源码不动——不给别人的实现打 diff
+- 提示词不动——人家已经调好的 system prompt 不掺和
+- 只改两处：**会什么**（技能）和**被什么拦住**（插件）
 
-> **不改宿主框架、不改源码、不改提示词。** 开源 agent 的 system prompt 已经写得很好，本项目的调整只发生在"会什么"（技能）和"被什么拦住"（插件）。
+## 📦 产出物：两类补丁
 
-## 🔁 工作流（主线）
+| 类型 | 落点 | 作用 | 例子 |
+|---|---|---|---|
+| **技能** | `skills/<name>/SKILL.md`（可挂到宿主技能目录） | 把失败恢复步骤固化成按需加载的知识 | "同一调用失败两次必须换方法" + 各工具的处理顺序 |
+| **插件** | 宿主插件（如 DSH plugin） | 用钩子在工具执行前拦截，给出拒绝理由 | 同一「工具+参数」连续失败 2 次后，第 3 次直接 deny |
+
+## 🔁 工作流
 
 ```
 真实会话 → 导出数据集 → 失败聚类 → 生成补丁 → 档案登记 → 回放验收 → 达标才装
@@ -28,308 +32,115 @@
 
 | 步骤 | 命令 | 产物 |
 |---|---|---|
-| 导出 | `python tools/export_dsh.py` | `build/dsh_turns.jsonl`、`dsh_weather.json` |
-| 聚类 | `python tools/cluster_failures.py` | `build/dsh_failures.json` |
-| 生成 | `python tools/make_patches.py` | `patches/p001-skill-*`、`p002-plugin-*` |
+| 导出 | `python tools/export_dsh.py --out build/dsh_weather` | `build/dsh_weather/{dsh_turns,dsh_weather,dsh_events,dsh_summary}.json*` |
+| 聚类 | `python tools/cluster_failures.py` | `build/dsh_weather/dsh_failures.json` |
+| 生成 | `python tools/make_patches.py` | `build/dsh_weather/patches/p001-skill-*`、`p002-plugin-*` |
 | 登记 | `python tools/patch_registry.py sync --patches build/dsh_weather/patches` | `build/patch_registry.json` |
 | 验收 | `python tools/verify_patch.py plan / run / compare` | `verify_result.json` |
 
-补丁只有两类：**技能**（会什么）和 **插件**（被什么拦住）。提示词、框架、源码都不动。
-
-## 🧪 内部实验：结构自进化沙盒
-
-> 下面这部分是验证"门控/天气回放/补丁机制"本身的沙盒，**不作用于任何真实宿主**。它跑自己的小图、改自己的 spec，不是你的 agent。
-
-### 三轴进化（每次运行自动推进）
-
-| 轴 | 机制 | 持久化 |
-|---|---|---|
-| **知识轴** | 失败 → LLM 反思 → 技能生成；与已有技能高度相似时 **upsert 更新**（版本递增、教训去重）而非新建 | `skills/*.md` |
-| **技能工具化** | 技能 frontmatter 带 `action` 字段 → 注册为**可调用工具**，LLM 通过 function-call 式决策调用，技能库增删 = 动作集增删 | `skills/` + `skill_meta.json` |
-| **权重轴** | 统计每个奖励步骤 raw 与任务成功的相关性（Δ），死区/样本门槛/clamp 后 ±10% 调整 | `memory/reward_weights.json` |
-| **结构轴** | 每 N 轮触发**架构师检查点**：LLM 审视进化历史 → 提案改图拓扑（增删节点/改条件路由）→ 影子评估 → 门控 → 切换/回滚 | `memory/graph_spec.json` |
-
-### 四层安全护栏（结构进化的安全网）
-
-1. **图验证器**（10 条规则）：注册表白名单、保护节点、无环、可达性、终止性、条件标签覆盖、规模上限——LLM 生成的 spec 永远无法引用注册表外的函数
-2. **影子评估**：候选图在**天气回放**（生产窗口真实请求序列）下跑 K 轮，只算不写——与生产面对完全相同环境，零污染
-3. **门控**：影子成功率 ≥ 生产、重算总分 ≥ 生产 + 阈值，且 bootstrap 胜率 ≥ 75%，才切换（9 个样本的点估计噪声大，胜率条件防"运气好"）
-4. **回滚**：切换前备份快照；后续劣化自动恢复，回滚后冷却期防振荡
-
-### 真实任务环境
-
-- mock API 模拟**突发性超时**（过载期按时间自然恢复——真实服务的故障特征）
-- 执行循环支持：前置探测 / 指数退避重试 / **熔断器** / **降级兜底**（"保证有结果"而非"永远重试成功"）
-- 全部真实执行：成功/耗时/重试/降级 = 奖励依据，无模拟打分
-
-## 🏗️ 架构
-
-```
-                       ┌────────────────────────────────────────────┐
-   任务 ──▶ load_skills │  bge-m3 向量检索 → 技能注入 + 工具注册表      │
-                       └───────────────┬────────────────────────────┘
-                                       ▼
-                       ┌────────────────────────────────────────────┐
-                       │  route_execution (g1 起为条件路由)           │
-                       │  ├─ 有匹配技能工具 → tool_dispatch（确定性执行 action）│
-                       │  └─ 否则 → execute（LLM 决策策略 JSON）      │
-                       └───────────────┬────────────────────────────┘
-                                       ▼
-                       ┌────────────────────────────────────────────┐
-                       │  真实执行：探测 → 重试(熔断) → 降级兜底        │
-                       │  奖励评估：execute / efficiency / ...        │
-                       └───────────────┬────────────────────────────┘
-                                       ▼
-                       ┌────────────────────────────────────────────┐
-                       │  失败? ──▶ 反思 ──▶ 技能 upsert（知识轴）     │
-                       │  成功? ──▶ save_memory（轨迹入库）            │
-                       └────────────────────────────────────────────┘
-                                       ▼
-        ┌──────────────── 每 EPOCH_ROUNDS 轮 ────────────────┐
-        ▼                                                    ▼
-  ⚖️ 权重自适应（权重轴）                          🧠 架构师检查点（结构轴）
-                                         提案 → 验证器 → 影子评估 → 门控 → 切换/回滚
-                                         全部决策写入 memory/evolution_log.jsonl
-```
-
 ## 🚀 快速开始
 
-先跑补丁主线（不需要 LLM key，只读本地会话）：
+只读本地会话，不需要 LLM key：
 
 ```bash
 pip install -r requirements.txt          # 含 zstandard
-python tools/export_dsh.py --limit 20   # 导出真实会话
-python tools/cluster_failures.py        # 失败签名聚类
-python tools/make_patches.py            # 生成技能/插件补丁
+python tools/export_dsh.py --out build/dsh_weather
+python tools/cluster_failures.py
+python tools/make_patches.py
 python tools/patch_registry.py sync --patches build/dsh_weather/patches
+python tools/patch_registry.py list
 ```
 
-下面的沙盒用来验证机制本身：
+用真实数据跑出来的样子（本机 154 轮会话）：
+
+```
+轮次 154，失败轮 30，工具错误 32，失败率 19.5%
+  p001  skill  工具失败恢复技能（dsh-tool-recovery）
+  p002  plugin dsh-guard：重复失败调用拦截
+```
+
+## 🗂️ 补丁包长什么样
+
+```
+patches/
+├── INDEX.md                        # 清单：编号/类型/标题/风险/状态
+├── p001-skill-tool-recovery/
+│   ├── patch.json                  # 证据、装法、回滚、验收指标
+│   └── payload/SKILL.md
+└── p002-plugin-repeat-guard/
+    ├── patch.json
+    └── payload/
+        ├── lib/index.js            # 插件源码
+        ├── package.json
+        └── cordis.patch.yml        # bundle 注册
+```
+
+`patch.json` 的字段：
+
+| 字段 | 含义 |
+|---|---|
+| `id` / `kind` / `title` | 编号、类型（skill/plugin）、标题 |
+| `status` | 生成时一律 `candidate`，生成不等于应用 |
+| `evidence` | 来自多少轮、多少失败、哪些签名、样本 |
+| `payload` | 实体文件清单 |
+| `apply` / `rollback` | 怎么装、怎么撤 |
+| `verify` | 指标、基线、目标 |
+
+## 🧾 档案与验收
+
+状态机（非法迁移直接拒绝，`adopted` 是终态）：
+
+```
+candidate ──▶ trial ──▶ adopted
+   │            │
+   └──▶ rejected ◀──┘        rejected 可回到 candidate
+```
+
+验收分三段，runner 由你提供（任何语言都行）：
 
 ```bash
-# 1. 创建环境并安装依赖（uv 或 pip 均可）
-uv sync
-# 或
-pip install -r requirements.txt
+# 1) 从失败轮生成用例 + 验收计划
+python tools/verify_patch.py plan --patch build/dsh_weather/patches/p001-skill-tool-recovery
 
-# 2. 配置 LLM
-#    方式一（推荐）：环境变量
-#    set LLM_API_KEY=sk-xxx            （或 DEEPSEEK_API_KEY）
-#    set LLM_BASE_URL=https://api.deepseek.com
-#    方式二：本机 Hermes 的 .env（HERMES_HOME 指向其目录时自动读取）
-#    set HERMES_HOME=C:\path\to\hermes
+# 2) 在隔离环境重跑同一批用例（不要动生产 profile）
+python tools/verify_patch.py run --patch-dir <补丁目录> \
+  --runner "python my_runner.py --cases {cases} --out {out}"
 
-# 3. 向量检索依赖本地 Ollama + bge-m3（免费）
-#    ollama pull bge-m3
-#    （OLLAMA_URL 默认 http://127.0.0.1:11434）
-
-# 4. 运行
-python main.py             # 真实模式（需 LLM_API_KEY + Ollama bge-m3）
-python main.py --mock-llm  # 演示模式：无 key、无 Ollama 也能跑完整流程（伪 LLM + 伪向量）
-
-# 5. 运行测试
-pip install -r requirements-dev.txt   # 或 uv pip install pytest
-python -m pytest tests/ -q            # 54 项测试：验证器/权重/影子评估/操作原子性/mock 模型/门控防噪/补丁档案与验收
+# 3) 对比前后错误率；达标才升级
+python tools/verify_patch.py compare --patch-dir <补丁目录> \
+  --before before.json --after after.json --registry build/patch_registry.json
 ```
 
-> ⚠️ **密钥安全**：项目不读取、不存储任何写死在代码里的密钥。key 只通过环境变量注入，`.env*` 已被 `.gitignore` 排除。提交代码前请确保无 `.env` 文件被追踪。
+判定口径：同一批失败任务重跑，**工具错误率 ≤ 基线 70%** 才算通过；用例数不足一半直接判 fail。
 
 ## 📁 目录结构
 
 ```
 self-evolving-harness/
-├── main.py                  # 沙盒入口：任务套件 + 三轴进化编排
-├── mock_api.py              # 真实任务环境（突发性超时模拟 + 天气回放）
-├── core/
-│   ├── graph_builder.py     # 图即数据：节点/策略注册表、验证器、GraphRuntime
-│   ├── architect.py         # 架构师：提案→验证→影子评估→门控→切换/回滚
-│   ├── executor.py          # 执行循环（探测/熔断/降级）+ 技能工具决策
-│   ├── skill_manager.py     # 技能生命周期：检索/生成/upsert/工具注册/curator
-│   ├── weights.py           # 奖励权重自适应
-│   ├── rewarders.py         # 子评估器（真实执行结果驱动）
-│   ├── memory.py            # 轨迹存储（生产/shadow 隔离）+ 统计
-│   ├── state.py             # AgentState（含影子/轮次/图版本溯源）
-│   ├── evolution_log.py     # 进化审计日志 + 图快照（回滚源）
-│   ├── llm_client.py        # LLM 封装 + bge-m3 嵌入 + prompt 缓存
-│   ├── config.py            # 配置（key 只来自环境变量）
-│   └── tracer.py            # 过程可视化（影子期间静默）
-├── skills/                  # 技能库（Agent 自生长，可注册为工具）
-├── memory/                  # 运行数据：轨迹/权重/图spec/进化日志
-└── tools/                   # 真实会话 → 数据集 → 失败聚类 → 补丁 → 验收
-    ├── export_dsh.py        # 导出 DSH 会话（turns/events/weather/summary）
-    ├── cluster_failures.py  # 失败签名聚类
-    ├── reflect_failures.py  # 聚类 → 候选技能
-    ├── make_patches.py      # 聚类 → 技能/插件补丁包
-    ├── patch_registry.py    # 补丁档案状态机（candidate→trial→adopted）
-    └── verify_patch.py      # plan/run/compare：同批用例回放验收
+├── tools/                       # 主线：会话 → 数据集 → 补丁 → 验收
+│   ├── export_dsh.py            # 导出 DSH 会话（turns/events/weather/summary）
+│   ├── cluster_failures.py      # 按错误签名聚类失败
+│   ├── reflect_failures.py      # 聚类 → 候选技能
+│   ├── make_patches.py          # 聚类 → 技能/插件补丁包
+│   ├── patch_registry.py        # 档案状态机
+│   └── verify_patch.py          # plan/run/compare 验收
+├── tests/                       # 54 项测试
+├── build/                       # 导出与补丁产物（.gitignore）
+└── skills/                      # 技能库（技能补丁落点）
 ```
 
-## 🧪 沙盒进化记录（示例）
+## ⚖️ 边界
 
-`memory/evolution_log.jsonl` 记录了架构师的全部决策，可审计：
-
-```
-[propose]  add_node tool_dispatch + 条件路由 + 删直边          （缺出边）
-[rejected] 验证失败: 无法到达 END: ['tool_dispatch']           ← 护栏拦截
-[propose]  add_node tool_dispatch + 条件路由 + 出边 + 删直边    （从拒绝中学习）
-[shadow]   影子评估通过                                        ← 天气回放公平对比
-[switch]   g1 已切换，基线 11.72                               ← 图结构进化为 g1
-[propose]  set_policy + remove_node（精简反思链）               ← 继续探索新方向
-[rejected] 验证失败 + fix 建议自动生成                         ← 修复指引喂回架构师
-[switch]   g2 已切换（反思分支整体下线，基线 13.38）             ← 架构师完整提案成功
-[rollback] 平均 8.55 < 基线 13.38 - 2.0 → 自动回滚             ← 劣化检测兜底生效
-```
-
-## 🖥️ 运行效果（--mock-llm 演示模式节选）
-
-```
-🧬 进化三轴: 知识(技能upsert) | 权重(奖励自适应) | 结构(架构师改图)
-
-  🗺️ 当前图结构
-  ▸ 版本: g2
-  ▸ 入口: load_skills  节点: 7  边: 7
-  ▸   load_skills: →r_load
-  ▸   r_load: →tool_dispatch[route_execution]
-  ▸   execute: →r_exec
-  ▸   r_exec: →r_eff
-  ▸   r_eff: →END[should_deep_reflect]
-  ▸   save_memory: →END
-  ▸   tool_dispatch: →r_exec
-  ▸ 保护节点: execute, load_skills, save_memory
-
-  📋 任务: 调用可能超时的API并保证成功  (轮次 43, 图 g2)
-  🔍 技能检索（bge-m3 向量相似度）
-  🔧 技能工具调度          ← 确定性分发：调用技能 resilient-api-call-v2
-  ❌ 第1次请求超时 → 退避等待 0.5s
-  ❌ 第2次请求超时 → 熔断器打开 → 降级兜底 fallback=cached
-
-  🎁 奖励评估
-  ✅ 任务降级 | 重试 2 次 | 耗时 2.56s | 工具 resilient-api-call-v2
-  load_skills    raw=+0.80 → weighted=+0.80 (向量检索到相关技能)
-  execute        raw=+1.50 → weighted=+6.00 (任务成功; 降级兜底-1.0; 耗时2.56s快+0.5)
-  efficiency     raw=-0.50 → weighted=-0.75 (重试2次(-1.0); 步骤多-1.0; 复用技能+1.0; 遵循技能机制+0.5)
-  🏆 总奖励: 6.05
-
-  🧠 架构师检查点（结构自进化）
-  回滚: 图已回滚: 平均 8.55 低于切换前基线 13.38   ← 劣化自动恢复
-```
-
-## 🛠️ 技能工具示例（技能 = 可调用插件）
-
-技能文件 `skills/*.md` 的 frontmatter 带 `action` 字段即注册为工具，LLM 可调用、`tool_dispatch` 节点可确定性执行：
-
-```yaml
----
-name: resilient-api-call-v2
-description: 调用可能超时的API并保证成功，通过前置检查、动态重试、熔断降级确保始终有可用结果
-type: agent-created
-created_at: 2026-08-18
-state: active
-version: 2
-action:                    # ← 可执行配置：注册为工具
-  max_retries: 3
-  base_delay: 0.5
-  backoff: exponential
-  pre_check: true          # 前置探测：失败直接降级，不浪费重试
-  circuit_breaker: true    # 熔断：连续失败 2 次停止重试
-  fallback: cached         # 兜底：保证有结果
----
-```
-
-- **无 `action` 字段** → 仅作为参考知识注入 prompt（兼容旧技能）
-- 技能库增删/更新 → 工具集随之变化（**动作集 = 结构的一部分**）
-- 反思生成的技能若与已有技能高度相似 → **upsert 更新**（版本递增、教训去重），知识收敛不膨胀
-
-## 📥 接入真实会话
-
-`tools/export_dsh.py` 把 DeepSeek Harness 的会话转录（`~/.dsh/sessions/**/session.v4.jsonl.zstd`）导出成本项目可用的数据集：
-
-```bash
-python tools/export_dsh.py              # 全量，输出到 build/
-python tools/export_dsh.py --limit 6    # 只取最近 6 个会话
-```
-
-产物：
-
-- `build/dsh_turns.jsonl`：每轮任务（任务文本 / 工具调用 / token / 耗时 / 是否成功 / LLM 重试）
-- `build/dsh_events.json`：`{轮次: [每次尝试的 ok 序列]}`，可直接作为天气回放输入
-- `build/dsh_weather.json`：按轮次排列的天气脚本（`{task, events, success, duration_ms}`）
-- `build/dsh_summary.json`：工具分布、错误率、token 总量、重试次数
-
-用真实会话的失败序列当天气跑进化（不再用突发超时模型）：
-
-```bash
-python main.py --mock-llm --weather build/dsh_weather.json
-```
-
-把失败轮聚成可行动的模式，并反射成候选技能：
-
-```bash
-python tools/cluster_failures.py     # → build/dsh_failures.json（按错误签名聚类）
-python tools/reflect_failures.py     # → build/dsh_skills/*.md（candidate，人工评审后启用）
-```
-
-把失败模式变成两类可审阅的补丁包（技能 / 插件）：
-
-```bash
-python tools/make_patches.py --turns build/dsh_weather/dsh_turns.jsonl
-```
-
-产物在 `patches/`：`INDEX.md` + `p001-skill-*` / `p002-plugin-*`，
-每个包有 `patch.json`（证据、装法、回滚、验收指标）和 `payload/` 实体文件。
-补丁默认 `status: candidate`——生成不等于应用；验收口径是同一批会话回放后工具错误率低于基线 70%。
-
-补丁不是生成完就结束：档案记录状态流转，验收器负责“同一批失败任务重跑、比较错误率”。
-
-```bash
-python tools/patch_registry.py sync --patches build/dsh_weather/patches   # candidate 登记
-python tools/verify_patch.py plan --patch <补丁目录> --turns build/dsh_weather/dsh_turns.jsonl
-python tools/verify_patch.py run --patch-dir <补丁目录> --runner "python my_runner.py --cases {cases} --out {out}"
-python tools/verify_patch.py compare --patch-dir <补丁目录> --before before.json --after after.json --registry build/patch_registry.json
-```
-
-档案状态机：`candidate → trial → adopted / rejected`，非法迁移直接拒绝；
-验收未达到 target 不会自动升级。
-
-依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
-
-## ❓ FAQ
-
-**Q: 会改我的 agent 框架或提示词吗？**
-A: 不会。补丁面只有技能和插件：技能改"会什么"，插件改"被什么拦住"。框架、源码、system prompt 都不碰——开源 agent 的提示词已经写得很好。
-
-**Q: 没有 API key 能跑吗？**
-A: 能。`python main.py --mock-llm` 用确定性伪 LLM + 伪向量跑完整流程（三轴进化、护栏、可视化全部可见），零外部依赖。
-
-**Q: Ollama 没装 / bge-m3 没拉？**
-A: 向量检索依赖本地 Ollama + bge-m3：`ollama pull bge-m3`。未启动时程序会给出可操作提示（不会裸崩）。mock 模式不需要 Ollama。
-
-**Q: 首次运行生成了什么？**
-A: `memory/` 自动创建：`graph_spec.json`（默认图）、`reward_weights.json`（默认权重）、`rl_trajectory.jsonl`（轨迹）、`evolution_log.jsonl`（进化审计）。技能库为空时第一次失败会反思生成第一个技能。
-
-**Q: 密钥安全吗？**
-A: key 只来自项目根目录 `.env`（已被 .gitignore 排除）或环境变量，代码里零硬编码。提交前可用 `git grep -lE "sk-[a-zA-Z0-9]{16,}"` 自查。
-
-**Q: 图会被改坏吗？**
-A: 四层护栏：注册表白名单（LLM 只能引用注册表内节点/策略）→ 验证器 10 条规则 → 影子评估（天气回放）→ 门控 + 自动回滚。改坏了会回滚，不会停摆。
-
-## ⚖️ 诚实的设计边界
-
-- **不改宿主框架**：进化只作用于技能/插件，宿主 Agent 的节点、循环、图结构、system prompt 保持原样——这是刻意的边界，不是能力不足
-- **节点行为仍是代码**：本项目内部的图进化是实验沙盒，用来验证门控与补丁机制本身；它不会去改真实宿主的实现
-- **架构师的空间推理在渐进**：提案质量受 LLM 图推理能力限制，通过"拒绝原因 + 修复建议"反馈逐轮改进
-- **技能库规模决定检索质量**：多领域技能积累后，跨任务误匹配会自然消失
+- **不改宿主框架、源码、system prompt**——这是刻意的边界，不是能力不足
+- **生成不等于应用**：所有补丁默认 `candidate`，装不装由人或验收结果决定
+- **离线指标只是门槛**：回放能过滤明显无效的补丁，不能保证线上零回归
+- 仓库里保留了早期结构自进化沙盒的代码（`main.py`、`core/`），它不属于本文档描述的主线，也不作用于任何真实宿主
 - 本项目是**实验/教学性质**，欢迎 fork 改造
 
 ## 🔗 Related Work
 
-本项目是以下方向的开源组合，各维度均有先驱，但**无人同时具备全部**：
-
-- **[EvolveBank](https://github.com/C10udsea/evolvebank)** — 自进化策略银行：反思蒸馏 + 向量检索 + 结果反馈，与本项目知识轴同构
-- **[SkillFlow](https://github.com/beita6969/SkillFlow)** — 技能递归进化 + 奖励信号（训练型研究）
-- **[Ouroboros](https://arxiv.org/html/2608.08311)** — Self-Developing Coding Agent，核心进化带 review 门控
-- **[Living-Harness](https://arxiv.org/html/2607.26598v2)** — Interactive-Agent Evolver
-- **[RewardHarness](https://github.com/TIGER-AI-Lab/RewardHarness)** — 奖励框架自身自进化
+- **[EvolveBank](https://github.com/C10udsea/evolvebank)** — 自进化策略银行：反思蒸馏 + 向量检索 + 结果反馈
+- **[SkillFlow](https://github.com/beita6969/SkillFlow)** — 技能递归进化 + 奖励信号
 - **[Voyager](https://github.com/MineDojo/Voyager)** / **[Reflexion](https://github.com/noahshinn/reflexion)** — 技能库与反思的先驱
 - 领域全景：[awesome-agent-evolution](https://github.com/Shiyao-Huang/awesome-agent-evolution)
 
