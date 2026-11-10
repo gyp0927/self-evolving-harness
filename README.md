@@ -233,6 +233,18 @@ python tools/make_patches.py --turns build/dsh_weather/dsh_turns.jsonl
 每个包有 `patch.json`（证据、装法、回滚、验收指标）和 `payload/` 实体文件。
 补丁默认 `status: candidate`——生成不等于应用；验收口径是同一批会话回放后工具错误率低于基线 70%。
 
+补丁不是生成完就结束：档案记录状态流转，验收器负责“同一批失败任务重跑、比较错误率”。
+
+```bash
+python tools/patch_registry.py sync --patches build/dsh_weather/patches   # candidate 登记
+python tools/verify_patch.py plan --patch <补丁目录> --turns build/dsh_weather/dsh_turns.jsonl
+python tools/verify_patch.py run --patch-dir <补丁目录> --runner "python my_runner.py --cases {cases} --out {out}"
+python tools/verify_patch.py compare --patch-dir <补丁目录> --before before.json --after after.json --registry build/patch_registry.json
+```
+
+档案状态机：`candidate → trial → adopted / rejected`，非法迁移直接拒绝；
+验收未达到 target 不会自动升级。
+
 依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
 
 ## ❓ FAQ
