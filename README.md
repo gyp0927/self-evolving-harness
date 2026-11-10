@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-46%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
 ![Architecture](https://img.shields.io/badge/架构-StructureSelfEvolving-purple)
 
 > 一个会**自己改自己**的 Agent Harness：技能自己长出来、奖励权重自己调、图的拓扑被架构师 LLM 自己改写——全程不训练模型权重，纯外部结构进化。
@@ -26,7 +26,7 @@
 
 1. **图验证器**（10 条规则）：注册表白名单、保护节点、无环、可达性、终止性、条件标签覆盖、规模上限——LLM 生成的 spec 永远无法引用注册表外的函数
 2. **影子评估**：候选图在**天气回放**（生产窗口真实请求序列）下跑 K 轮，只算不写——与生产面对完全相同环境，零污染
-3. **门控**：影子成功率 ≥ 生产，且重算总分 ≥ 生产 + 阈值，才切换
+3. **门控**：影子成功率 ≥ 生产、重算总分 ≥ 生产 + 阈值，且 bootstrap 胜率 ≥ 75%，才切换（9 个样本的点估计噪声大，胜率条件防"运气好"）
 4. **回滚**：切换前备份快照；后续劣化自动恢复，回滚后冷却期防振荡
 
 ### 真实任务环境
@@ -90,7 +90,7 @@ python main.py --mock-llm  # 演示模式：无 key、无 Ollama 也能跑完整
 
 # 5. 运行测试
 pip install -r requirements-dev.txt   # 或 uv pip install pytest
-python -m pytest tests/ -q            # 46 项测试：验证器/权重/影子评估/操作原子性/mock 模型/门控防噪
+python -m pytest tests/ -q            # 54 项测试：验证器/权重/影子评估/操作原子性/mock 模型/门控防噪/补丁档案与验收
 ```
 
 > ⚠️ **密钥安全**：项目不读取、不存储任何写死在代码里的密钥。key 只通过环境变量注入，`.env*` 已被 `.gitignore` 排除。提交代码前请确保无 `.env` 文件被追踪。
@@ -115,7 +115,14 @@ self-evolving-harness/
 │   ├── config.py            # 配置（key 只来自环境变量）
 │   └── tracer.py            # 过程可视化（影子期间静默）
 ├── skills/                  # 技能库（Agent 自生长，可注册为工具）
-└── memory/                  # 运行数据：轨迹/权重/图spec/进化日志
+├── memory/                  # 运行数据：轨迹/权重/图spec/进化日志
+└── tools/                   # 真实会话 → 数据集 → 失败聚类 → 补丁 → 验收
+    ├── export_dsh.py        # 导出 DSH 会话（turns/events/weather/summary）
+    ├── cluster_failures.py  # 失败签名聚类
+    ├── reflect_failures.py  # 聚类 → 候选技能
+    ├── make_patches.py      # 聚类 → 三类补丁包（skill/prompt/plugin）
+    ├── patch_registry.py    # 补丁档案状态机（candidate→trial→adopted）
+    └── verify_patch.py      # plan/run/compare：同批用例回放验收
 ```
 
 ## 🧪 真实进化记录（示例）
