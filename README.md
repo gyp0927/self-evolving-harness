@@ -1,9 +1,9 @@
-# 🧬 Harness — 结构自进化 Agent
+# 🧬 Harness — Agent 补丁流水线
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
-![Architecture](https://img.shields.io/badge/架构-StructureSelfEvolving-purple)
+![Architecture](https://img.shields.io/badge/架构-PatchPipeline-purple)
 
 > 一个从**真实会话**里学、只往外打两类补丁的 Agent Harness：**技能、插件**。不改宿主框架、不改源码，也不改人家已经写好的 system prompt。
 
@@ -20,7 +20,25 @@
 
 > **不改宿主框架、不改源码、不改提示词。** 开源 agent 的 system prompt 已经写得很好，本项目的调整只发生在"会什么"（技能）和"被什么拦住"（插件）。
 
-## ✨ 核心特性
+## 🔁 工作流（主线）
+
+```
+真实会话 → 导出数据集 → 失败聚类 → 生成补丁 → 档案登记 → 回放验收 → 达标才装
+```
+
+| 步骤 | 命令 | 产物 |
+|---|---|---|
+| 导出 | `python tools/export_dsh.py` | `build/dsh_turns.jsonl`、`dsh_weather.json` |
+| 聚类 | `python tools/cluster_failures.py` | `build/dsh_failures.json` |
+| 生成 | `python tools/make_patches.py` | `patches/p001-skill-*`、`p002-plugin-*` |
+| 登记 | `python tools/patch_registry.py sync --patches build/dsh_weather/patches` | `build/patch_registry.json` |
+| 验收 | `python tools/verify_patch.py plan / run / compare` | `verify_result.json` |
+
+补丁只有两类：**技能**（会什么）和 **插件**（被什么拦住）。提示词、框架、源码都不动。
+
+## 🧪 内部实验：结构自进化沙盒
+
+> 下面这部分是验证"门控/天气回放/补丁机制"本身的沙盒，**不作用于任何真实宿主**。它跑自己的小图、改自己的 spec，不是你的 agent。
 
 ### 三轴进化（每次运行自动推进）
 
@@ -76,6 +94,18 @@
 
 ## 🚀 快速开始
 
+先跑补丁主线（不需要 LLM key，只读本地会话）：
+
+```bash
+pip install -r requirements.txt          # 含 zstandard
+python tools/export_dsh.py --limit 20   # 导出真实会话
+python tools/cluster_failures.py        # 失败签名聚类
+python tools/make_patches.py            # 生成技能/插件补丁
+python tools/patch_registry.py sync --patches build/dsh_weather/patches
+```
+
+下面的沙盒用来验证机制本身：
+
 ```bash
 # 1. 创建环境并安装依赖（uv 或 pip 均可）
 uv sync
@@ -108,7 +138,7 @@ python -m pytest tests/ -q            # 54 项测试：验证器/权重/影子�
 
 ```
 self-evolving-harness/
-├── main.py                  # 入口：任务套件 + 三轴进化编排
+├── main.py                  # 沙盒入口：任务套件 + 三轴进化编排
 ├── mock_api.py              # 真实任务环境（突发性超时模拟 + 天气回放）
 ├── core/
 │   ├── graph_builder.py     # 图即数据：节点/策略注册表、验证器、GraphRuntime
@@ -134,7 +164,7 @@ self-evolving-harness/
     └── verify_patch.py      # plan/run/compare：同批用例回放验收
 ```
 
-## 🧪 真实进化记录（示例）
+## 🧪 沙盒进化记录（示例）
 
 `memory/evolution_log.jsonl` 记录了架构师的全部决策，可审计：
 
@@ -210,7 +240,7 @@ action:                    # ← 可执行配置：注册为工具
 - 技能库增删/更新 → 工具集随之变化（**动作集 = 结构的一部分**）
 - 反思生成的技能若与已有技能高度相似 → **upsert 更新**（版本递增、教训去重），知识收敛不膨胀
 
-## 📥 接入真实会话（可选）
+## 📥 接入真实会话
 
 `tools/export_dsh.py` 把 DeepSeek Harness 的会话转录（`~/.dsh/sessions/**/session.v4.jsonl.zstd`）导出成本项目可用的数据集：
 
@@ -264,6 +294,9 @@ python tools/verify_patch.py compare --patch-dir <补丁目录> --before before.
 依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
 
 ## ❓ FAQ
+
+**Q: 会改我的 agent 框架或提示词吗？**
+A: 不会。补丁面只有技能和插件：技能改"会什么"，插件改"被什么拦住"。框架、源码、system prompt 都不碰——开源 agent 的提示词已经写得很好。
 
 **Q: 没有 API key 能跑吗？**
 A: 能。`python main.py --mock-llm` 用确定性伪 LLM + 伪向量跑完整流程（三轴进化、护栏、可视化全部可见），零外部依赖。
