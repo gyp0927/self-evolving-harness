@@ -223,6 +223,16 @@ python tools/cluster_failures.py     # → build/dsh_failures.json（按错误�
 python tools/reflect_failures.py     # → build/dsh_skills/*.md（candidate，人工评审后启用）
 ```
 
+把失败模式变成三类可审阅的补丁包（技能 / 提示 / 插件）：
+
+```bash
+python tools/make_patches.py --turns build/dsh_weather/dsh_turns.jsonl
+```
+
+产物在 `patches/`：`INDEX.md` + `p001-skill-*` / `p002-prompt-*` / `p003-plugin-*`，
+每个包有 `patch.json`（证据、装法、回滚、验收指标）和 `payload/` 实体文件。
+补丁默认 `status: candidate`——生成不等于应用；验收口径是同一批会话回放后工具错误率低于基线 70%。
+
 依赖 `zstandard` 读取压缩转录：`pip install zstandard`。只读本地文件，不联网。
 
 ## ❓ FAQ
