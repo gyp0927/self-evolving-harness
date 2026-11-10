@@ -59,6 +59,17 @@ python tools/patch_registry.py list
   p002  plugin dsh-guard：重复失败调用拦截
 ```
 
+## 👀 实时监督（可选）
+
+```bash
+python tools/watch_agents.py --once            # 扫一遍就退出，适合计划任务
+python tools/watch_agents.py --interval 15     # 常驻轮询
+```
+
+- 来源：Claude Code（`~/.claude/projects/**/*.jsonl`，增量 tail）与 DSH（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，解压后按行增量）
+- 产物：新失败写 `build/alerts.jsonl`；同一「工具+错误签名」24 小时内 ≥3 次且 1 小时未报过才告警
+- 状态：`build/watch_state.json`（记录每个文件的读取位点，重启不重复计数）
+
 ## 🗂️ 补丁包长什么样
 
 ```
