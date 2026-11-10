@@ -5,21 +5,20 @@
 ![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
 ![Architecture](https://img.shields.io/badge/架构-StructureSelfEvolving-purple)
 
-> 一个从**真实会话**里学、只往外打三类补丁的 Agent Harness：**提示词、技能、插件**。不改宿主框架、不改源码，全程不训练模型权重。
+> 一个从**真实会话**里学、只往外打两类补丁的 Agent Harness：**技能、插件**。不改宿主框架、不改源码，也不改人家已经写好的 system prompt。
 
 ## 一句话定位
 
-大多数 Agent 框架的"进化"发生在生态里（人写插件、人调参）；本项目把它做成流水线：导出真实会话 → 失败聚类 → 生成补丁 → 同一批任务回放验收 → 达标才留下。**补丁只落在提示词、技能、插件三个位置，不碰宿主 Agent 的框架和源码。**
+大多数 Agent 框架的"进化"发生在生态里（人写插件、人调参）；本项目把它做成流水线：导出真实会话 → 失败聚类 → 生成补丁 → 同一批任务回放验收 → 达标才留下。**补丁只落在技能和插件两个位置，不碰宿主 Agent 的框架、源码和 system prompt。**
 
-## 📦 产出物：只有三类补丁
+## 📦 产出物：只有两类补丁
 
 | 类型 | 落点 | 作用 |
 |---|---|---|
-| **提示词** | 追加到 system prompt | 把反复踩的坑写成行为规则（如"同一调用失败两次必须换方法"） |
 | **技能** | `skills/*.md`（可注册为工具） | 把失败恢复步骤固化成按需加载的知识 |
 | **插件** | 宿主插件（如 DSH plugin） | 用钩子在工具执行前拦截、给出拒绝理由 |
 
-> **不改宿主框架、不改源码。** Agent 的架构是既定的，本项目只调整它"看到什么、会什么、被什么拦住"。
+> **不改宿主框架、不改源码、不改提示词。** 开源 agent 的 system prompt 已经写得很好，本项目的调整只发生在"会什么"（技能）和"被什么拦住"（插件）。
 
 ## ✨ 核心特性
 
@@ -130,7 +129,7 @@ self-evolving-harness/
     ├── export_dsh.py        # 导出 DSH 会话（turns/events/weather/summary）
     ├── cluster_failures.py  # 失败签名聚类
     ├── reflect_failures.py  # 聚类 → 候选技能
-    ├── make_patches.py      # 聚类 → 三类补丁包（skill/prompt/plugin）
+    ├── make_patches.py      # 聚类 → 技能/插件补丁包
     ├── patch_registry.py    # 补丁档案状态机（candidate→trial→adopted）
     └── verify_patch.py      # plan/run/compare：同批用例回放验收
 ```
@@ -240,13 +239,13 @@ python tools/cluster_failures.py     # → build/dsh_failures.json（按错误�
 python tools/reflect_failures.py     # → build/dsh_skills/*.md（candidate，人工评审后启用）
 ```
 
-把失败模式变成三类可审阅的补丁包（技能 / 提示 / 插件）：
+把失败模式变成两类可审阅的补丁包（技能 / 插件）：
 
 ```bash
 python tools/make_patches.py --turns build/dsh_weather/dsh_turns.jsonl
 ```
 
-产物在 `patches/`：`INDEX.md` + `p001-skill-*` / `p002-prompt-*` / `p003-plugin-*`，
+产物在 `patches/`：`INDEX.md` + `p001-skill-*` / `p002-plugin-*`，
 每个包有 `patch.json`（证据、装法、回滚、验收指标）和 `payload/` 实体文件。
 补丁默认 `status: candidate`——生成不等于应用；验收口径是同一批会话回放后工具错误率低于基线 70%。
 
@@ -283,7 +282,7 @@ A: 四层护栏：注册表白名单（LLM 只能引用注册表内节点/策略
 
 ## ⚖️ 诚实的设计边界
 
-- **不改宿主框架**：进化只作用于提示词/技能/插件，宿主 Agent 的节点、循环、图结构保持原样——这是刻意的边界，不是能力不足
+- **不改宿主框架**：进化只作用于技能/插件，宿主 Agent 的节点、循环、图结构、system prompt 保持原样——这是刻意的边界，不是能力不足
 - **节点行为仍是代码**：本项目内部的图进化是实验沙盒，用来验证门控与补丁机制本身；它不会去改真实宿主的实现
 - **架构师的空间推理在渐进**：提案质量受 LLM 图推理能力限制，通过"拒绝原因 + 修复建议"反馈逐轮改进
 - **技能库规模决定检索质量**：多领域技能积累后，跨任务误匹配会自然消失

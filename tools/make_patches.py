@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-make_patches.py —— 把真实失败簇变成可审阅的补丁包（skill / prompt / plugin）
+make_patches.py —— 把真实失败簇变成可审阅的补丁包（skill / plugin）
 
 输入：build/*/dsh_turns.jsonl（tools/export_dsh.py 产物；可选 dsh_failures.json）
 输出：build/*/patches/<id>/patch.json + payload/*，以及 INDEX.md
@@ -26,7 +26,10 @@ from pathlib import Path
 
 from cluster_failures import cluster
 
-KIND_ORDER = ("skill", "prompt", "plugin")
+KIND_ORDER = ("skill", "plugin")
+
+# 提示词不属于本项目的补丁面：开源 agent 的 system prompt 已经写得很好，不去改它。
+# 只动两处：技能（知识/恢复步骤）与插件（执行前的硬拦截）。
 
 # 每类高频错误的“正确做法”；没命中的走 default
 TOOL_RULES = {
@@ -157,25 +160,6 @@ def _skill_md(clusters, evidence) -> str:
         "3. 同一调用完全相同地失败 2 次 → 停下来换方案（改参数不算换方案）",
         "",
     ]
-    return "\n".join(lines)
-
-
-def _prompt_md(clusters) -> str:
-    lines = [
-        "# 工具失败恢复（system prompt 片段）",
-        "",
-        "工具调用失败时：",
-        "1. 先读错误原文，分清参数错还是环境错。",
-        "2. 同一个工具 + 同一组参数失败两次后，禁止原样重试第三次；换参数、换工具或先搜索。",
-    ]
-    seen = set()
-    for c in clusters:
-        title, advice = _rule(c["cluster"])
-        if title in seen:
-            continue
-        seen.add(title)
-        lines.append(f"3. {title}：{advice}")
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -330,31 +314,13 @@ def build_patches(rows, out_dir: Path):
         "_dir": p1,
     })
 
-    # 2) 提示补丁
-    p2 = out_dir / "p002-prompt-failure-recovery"
-    _write(p2 / "payload" / "prompt.md", _prompt_md(clusters))
+    # 2) 插件补丁
+    p2 = out_dir / "p002-plugin-repeat-guard"
+    _write(p2 / "payload" / "lib" / "index.js", GUARD_JS)
+    _write(p2 / "payload" / "package.json", GUARD_PKG)
+    _write(p2 / "payload" / "cordis.patch.yml", GUARD_PATCH)
     patches.append({
         "id": "p002",
-        "kind": "prompt",
-        "title": "system prompt 追加：失败两次换方法",
-        "target": "dsh:desktop",
-        "risk": "low",
-        "status": "candidate",
-        "evidence": evidence,
-        "payload": {"files": [{"path": "prompt.md", "role": "prompt-fragment"}]},
-        "apply": "把片段追加到 agent 的 system prompt（或在 profile 的自定义指令里引入）",
-        "rollback": "删除追加块；保留原文备份",
-        "verify": verify,
-        "_dir": p2,
-    })
-
-    # 3) 插件补丁
-    p3 = out_dir / "p003-plugin-repeat-guard"
-    _write(p3 / "payload" / "lib" / "index.js", GUARD_JS)
-    _write(p3 / "payload" / "package.json", GUARD_PKG)
-    _write(p3 / "payload" / "cordis.patch.yml", GUARD_PATCH)
-    patches.append({
-        "id": "p003",
         "kind": "plugin",
         "title": "dsh-guard：重复失败调用拦截",
         "target": "dsh:desktop",
@@ -369,7 +335,7 @@ def build_patches(rows, out_dir: Path):
         "apply": "装到 desktop profile（node_modules junction + dependencies + bundles），重启生效",
         "rollback": "删 junction 并从 package.json 去掉依赖与 bundle 条目",
         "verify": verify,
-        "_dir": p3,
+        "_dir": p2,
     })
 
     for p in patches:
@@ -411,8 +377,8 @@ def _self_check():
             meta = json.loads((dirs[0] / "patch.json").read_text("utf-8"))
             for key in ("id", "kind", "evidence", "payload", "apply", "rollback", "verify", "status"):
                 assert key in meta, key
-        assert (Path(tmp) / "p003-plugin-repeat-guard" / "payload" / "lib" / "index.js").exists()
-    print("self-check ok: 3 类补丁 + 必需字段齐全")
+        assert (Path(tmp) / "p002-plugin-repeat-guard" / "payload" / "lib" / "index.js").exists()
+    print("self-check ok: 2 类补丁 + 必需字段齐全")
 
 
 def main():
