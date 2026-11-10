@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-5%20passed-brightgreen)
 
 > 从真实会话里提取失败，生成**技能**和**插件**两类补丁，每一条都要过回放验收。不改框架、不改源码、不改提示词。
 
@@ -124,9 +124,8 @@ self-evolving-harness/
 │   ├── make_patches.py          # 聚类 → 技能/插件补丁包
 │   ├── patch_registry.py        # 档案状态机
 │   └── verify_patch.py          # plan/run/compare 验收
-├── tests/                       # 54 项测试
-├── build/                       # 导出与补丁产物（.gitignore）
-└── skills/                      # 技能库（技能补丁落点）
+├── tests/                       # 5 项测试（补丁工具）
+└── build/                       # 导出与补丁产物（.gitignore）
 ```
 
 ## ⚖️ 边界
@@ -134,7 +133,6 @@ self-evolving-harness/
 - **不改宿主框架、源码、system prompt**——这是刻意的边界，不是能力不足
 - **生成不等于应用**：所有补丁默认 `candidate`，装不装由人或验收结果决定
 - **离线指标只是门槛**：回放能过滤明显无效的补丁，不能保证线上零回归
-- 仓库里保留了早期结构自进化沙盒的代码（`main.py`、`core/`），它不属于本文档描述的主线，也不作用于任何真实宿主
 - 本项目是**实验/教学性质**，欢迎 fork 改造
 
 ## 🔗 Related Work
